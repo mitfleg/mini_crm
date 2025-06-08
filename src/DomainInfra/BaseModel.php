@@ -46,9 +46,18 @@ abstract class BaseModel {
         $this->validate();
         $this->updated_at = date('Y-m-d H:i:s');
 
-        $bean = \R::dispense(static::TABLE);
+        if( $this->id ) {
+            $bean = \R::load(static::TABLE, $this->id);
+        }
+        else {
+            $bean = \R::dispense(static::TABLE);
+        }
 
         foreach($this->getFields() as $field => $value) {
+            if( $field === 'id' && !$this->id ) {
+                continue;
+            }
+
             $bean->$field = $value;
         }
 
@@ -119,7 +128,13 @@ abstract class BaseModel {
             $this->save();
         }
         else {
-            \R::trash($this);
+            if( $this->id ) {
+                $bean = \R::load(static::TABLE, $this->id);
+
+                if( $bean->id ) {
+                    \R::trash($bean);
+                }
+            }
         }
     }
 

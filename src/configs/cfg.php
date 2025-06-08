@@ -1,4 +1,8 @@
 <?php
 
 require_once ROOT_DIR . '/src/Libs/RedBean.php';
-R::setup('mysql:host=127.127.126.4;dbname=mini_crm', 'root', '');
+
+$dotenv = Dotenv\Dotenv::createImmutable(ROOT_DIR);
+$dotenv->load();
+
+R::setup("mysql:host=" . $_ENV['DB_HOST'] . ";dbname=" . $_ENV['DB_NAME'], $_ENV['DB_USER'], $_ENV['DB_PASSWORD']);

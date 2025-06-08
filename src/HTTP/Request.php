@@ -2,8 +2,12 @@
 
 namespace App\HTTP;
 
+use App\DomainInfra;
 use App\Domains\User\User;
 use App\DomainInfra\Exceptions\BaseException;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use Firebase\JWT\SignatureInvalidException;
 
 class Request {
 
@@ -15,6 +19,8 @@ class Request {
     public string $token;
     public array $uriParams;
     public array $cookie;
+    public string $method;
+    public string $path;
     private ?User $user = null;
 
     public function __construct() {
@@ -44,9 +50,16 @@ class Request {
                 $this->server[$key] = $value;
             }
         }
+
+        if( !isset($this->server['REMOTE_ADDR']) ) {
+            $this->server['REMOTE_ADDR'] = '127.0.0.1';
+        }
     }
 
     private function handleRequest() {
+        $this->method = $this->server['REQUEST_METHOD'];
+        $this->path = $this->server['REQUEST_URI'];
+
         if( ($this->server['REQUEST_METHOD'] === 'POST' || $this->server['REQUEST_METHOD'] === 'PUT') && isset($this->server['CONTENT_TYPE']) ) {
             if( strpos($this->server['CONTENT_TYPE'], 'application/json') !== false ) {
                 $jsonData = json_decode(file_get_contents('php://input'), true);
@@ -59,33 +72,42 @@ class Request {
     }
 
     private function loadUser(): void {
-            // $sessionService = new SessionService();
+        if( isset($this->headers['Authorization']) || isset($this->headers['authorization']) ) {
+            $this->token = str_replace('Bearer ', '', $this->headers['Authorization'] ?? $this->headers['authorization']);
+        }
+        else {
+            $this->token = '';
+        }
 
-            // if( isset($this->cookie['session_id']) || isset($this->headers['Authorization']) ) {
-            //     if( isset($this->headers['Authorization']) ) {
-            //         $token = str_replace('Bearer ', '', $this->headers['Authorization']);
-            //         $session = $sessionService->findActiveSessionByToken($token);
-            //         $this->cookie['session_id'] = $token;
-            //     }
-            //     else {
-            //         $session = $sessionService->findActiveSessionByToken($this->cookie['session_id']);
-            //     }
+        try {
+            $decoded = JWT::decode($this->token, new Key($_ENV['JWT_KEY'], 'HS256'));
+        } catch (SignatureInvalidException $e) {
+            throw new BaseException('Неверный токен', 401);
+        } catch (\Exception $e) {
+            throw new BaseException('Ошибка при обработке токена', 500);
+        }
 
-            //     if( !is_null($session) ) {
-            //         $serviceUser = new UserService();
-            //         $this->user = $serviceUser->findByID($session->user_id);
+        $userData = $decoded?->user_data;
 
-            //         if( !$this->user->is_active ) {
-            //             $serviceUser->logout($this->cookie['session_id']);
-            //             $this->user = null;
-            //         }
-            //     }
-            // }
+        if( !$userData ) {
+            throw new BaseException('Неверный токен', 401);
+        }
+
+        $user = User::findById($userData->id);
+
+        if( $user ) {
+            if( $user->getStatus() === User::STATUS_ACTIVE ) {
+                $this->user = $user;
+            }
+            else {
+                throw new BaseException('Пользователь заблокирован', 403);
+            }
+        }
     }
 
     public function getUser(): User {
         if( is_null($this->user) ) {
-            throw new BaseException('User not found', 401);
+            throw new BaseException('Пользователь не найден', 401);
         }
 
         return $this->user;
@@ -135,11 +157,19 @@ class Request {
         return isset($this->headers['Version']) ? $this->headers['Version'] : null;
     }
 
-    public function getIpAddress(): ?string {
-        return $this->server['REMOTE_ADDR'] ?? null;
+    public function getIpAddress(): string {
+        return $this->server['REMOTE_ADDR'];
     }
 
     public function getUserAgent(): ?string {
         return $this->server['HTTP_USER_AGENT'] ?? null;
+    }
+
+    public function buildResponse(string $contract, array $data = []): DomainInfra\ContractResponse {
+        return new $contract($data);
+    }
+
+    public function loadFromContract(string $contract): DomainInfra\ContractRequest {
+        return new $contract($this);
     }
 }

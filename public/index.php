@@ -2,8 +2,8 @@
 
 define('ROOT_DIR', dirname(__DIR__, 1));
 
-require_once ROOT_DIR . '/src/configs/cfg.php';
 require ROOT_DIR . '/vendor/autoload.php';
+require_once ROOT_DIR . '/src/configs/cfg.php';
 
 use App\Routes\Router;
 use App\DomainInfra\Exceptions\BaseException;
@@ -26,20 +26,12 @@ try {
     $router = new Router();
     require_once ROOT_DIR . '/src/Routes/routers.php';
     initRouters($router);
-
-    $response = [
-        'status' => 'success',
-        'message' => 'Мини-CRM API работает'
-    ];
-
-    header('Content-Type: application/json');
-    echo json_encode($response, JSON_UNESCAPED_UNICODE);
 } catch (BaseException $e) {
     http_response_code($e->getCode());
     echo json_encode(
         [
             'result' => false,
-            'error' => $e->getMessage()
+            'error' => $e->getMessage(),
         ],
         JSON_UNESCAPED_UNICODE
     );
@@ -48,7 +40,9 @@ try {
     echo json_encode(
         [
             'result' => false,
-            'error' => $e->getMessage()
+            'error' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine()
         ],
         JSON_UNESCAPED_UNICODE
     );
