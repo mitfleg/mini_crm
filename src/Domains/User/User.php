@@ -2,10 +2,11 @@
 
 namespace App\Domains\User;
 
+use App\DomainInfra\BaseModel;
 use \R;
 use App\DomainInfra\Exceptions\ModelException;
 
-class User {
+class User extends BaseModel {
 
     const TABLE = 'users';
 
@@ -19,186 +20,96 @@ class User {
         self::ROLE_USER => 'Пользователь'
     ];
 
-    private int $id;
+    /**
+     * @unique
+     * @required
+     */
     private string $login;
-    private string $password;
-    private string $email;
-    private string $name;
-    private string $role;
-    private string $created_at;
-    private string $updated_at;
-
-    public static function create(string $login, string $password, string $email, string $name, string $role = self::ROLE_USER): int {
-        self::checkUnique($login, $email);
-        self::validateRole($role);
-
-        $user = R::dispense(self::TABLE);
-        $user->login = $login;
-        $user->password = password_hash($password, PASSWORD_DEFAULT);
-        $user->email = $email;
-        $user->name = $name;
-        $user->role = $role;
-        $user->created_at = date('Y-m-d H:i:s');
-        $user->updated_at = date('Y-m-d H:i:s');
-
-        // Создаем индексы, если они еще не созданы
-        self::setupIndexes();
-
-        return R::store($user);
-    }
-
-    public static function getById(int $id): self {
-        return self::getBy('id', $id);
-    }
-
-    public static function getByLogin(string $login): self {
-        return self::getBy('login', $login);
-    }
-
-    private static function getBy(string $field, string $value): self {
-        /** @var User $user */
-        $user = R::findOne(self::TABLE, $field . ' = ?', [$value]);
-
-        if( !$user->id ) {
-            throw new ModelException('Пользователь не найден', 404);
-        }
-
-        return $user;
-    }
-
-    public static function getByEmail(string $email): self {
-        return self::getBy('email', $email);
-    }
 
     /**
-     * @return User[]
+     * @required
+     * @hidden
      */
-    public static function getAll(): array {
-        return R::findAll(self::TABLE);
+    private string $password;
+
+    /**
+     * @required
+     * @unique
+     */
+    private string $email;
+
+    /**
+     * @required
+     */
+    private string $role;
+
+    public function setLogin(string $login): self {
+        if( empty($login) ) {
+            throw new ModelException('Логин не может быть пустым');
+        }
+        elseif( strlen($login) < 3 ) {
+            throw new ModelException('Логин должен быть не менее 3 символов');
+        }
+        elseif( $this->findOneBy(['login' => $login]) ) {
+            throw new ModelException('Логин уже занят');
+        }
+
+        $this->login = $login;
+        return $this;
     }
 
-    public static function update(int $id, array $data): int {
-        $user = self::getById($id);
-
-        if( isset($data['login']) || isset($data['email']) ) {
-            $login = $data['login'] ?? $user->login;
-            $email = $data['email'] ?? $user->email;
-            self::checkUnique($login, $email, $id);
+    public function setEmail(string $email): self {
+        if( empty($email) ) {
+            throw new ModelException('Email не может быть пустым');
+        }
+        elseif( !filter_var($email, FILTER_VALIDATE_EMAIL) ) {
+            throw new ModelException('Некорректный email');
+        }
+        elseif( $this->findOneBy(['email' => $email]) ) {
+            throw new ModelException('Email уже занят');
         }
 
-        if( isset($data['role']) ) {
-            self::validateRole($data['role']);
-        }
-
-        foreach($data as $key => $value) {
-            if( $key === 'password' ) {
-                $user->$key = password_hash($value, PASSWORD_DEFAULT);
-            }
-            else {
-                $user->$key = $value;
-            }
-        }
-
-        $user->updated_at = date('Y-m-d H:i:s');
-        return R::store($user);
+        $this->email = $email;
+        return $this;
     }
 
-    public static function delete(int $id): bool {
-        $user = self::getById($id);
-        R::trash($user);
-        return true;
+    public function setPassword(string $password): self {
+        if( empty($password) ) {
+            throw new ModelException('Пароль не может быть пустым');
+        }
+        elseif( strlen($password) < 8 ) {
+            throw new ModelException('Пароль должен быть не менее 8 символов');
+        }
+        elseif( !preg_match('/[A-Z]/', $password) ) {
+            throw new ModelException('Пароль должен содержать хотя бы одну заглавную букву');
+        }
+        elseif( !preg_match('/[a-z]/', $password) ) {
+            throw new ModelException('Пароль должен содержать хотя бы одну строчную букву');
+        }
+        elseif( !preg_match('/[0-9]/', $password) ) {
+            throw new ModelException('Пароль должен содержать хотя бы одну цифру');
+        }
+
+        $this->password = password_hash($password, PASSWORD_DEFAULT);
+        return $this;
+    }
+
+    public function setRole(string $role): self {
+        if( !in_array($role, array_keys(self::ROLES)) ) {
+            throw new ModelException('Недопустимая роль пользователя: ' . $role);
+        }
+
+        $this->role = $role;
+        return $this;
     }
 
     public static function authenticate(string $login, string $password): ?self {
-        $user = self::getByLogin($login);
+        $user = self::findOneBy(['login' => $login]);
 
         if( $user && password_verify($password, $user->password) ) {
             return $user;
         }
 
         return null;
-    }
-
-    private static function checkUnique(string $login, string $email, ?int $excludeId = null): void {
-        $existingLogin = R::findOne(self::TABLE, 'login = ? AND id != ?', [$login, $excludeId ?? 0]);
-
-        if( $existingLogin ) {
-            throw new ModelException('Пользователь с таким логином уже существует', 400);
-        }
-
-        $existingEmail = R::findOne(self::TABLE, 'email = ? AND id != ?', [$email, $excludeId ?? 0]);
-
-        if( $existingEmail ) {
-            throw new ModelException('Пользователь с таким email уже существует', 400);
-        }
-    }
-
-    private static function setupIndexes(): void {
-        if( !R::testConnection() ) return;
-
-        $tables = R::inspect();
-
-        if( !in_array(self::TABLE, $tables) ) {
-            $user = R::dispense(self::TABLE);
-            R::store($user);
-            R::trash($user);
-        }
-
-        $constraints = R::getAll(
-            "
-            SELECT CONSTRAINT_NAME 
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS 
-            WHERE TABLE_NAME = " . self::TABLE . "
-            AND CONSTRAINT_TYPE = 'UNIQUE'
-        "
-        );
-
-        $hasLoginConstraint = false;
-        $hasEmailConstraint = false;
-
-        foreach($constraints as $constraint) {
-            if( strpos($constraint['CONSTRAINT_NAME'], 'login') !== false ) {
-                $hasLoginConstraint = true;
-            }
-
-            if( strpos($constraint['CONSTRAINT_NAME'], 'email') !== false ) {
-                $hasEmailConstraint = true;
-            }
-        }
-
-        // Добавляем уникальные ограничения, если их еще нет
-        if( !$hasLoginConstraint ) {
-            try {
-                R::exec('ALTER TABLE ' . self::TABLE . ' ADD CONSTRAINT unique_login UNIQUE (login)');
-            } catch (\Exception $e) {
-                // Игнорируем ошибку, если ограничение уже существует
-            }
-        }
-
-        if( !$hasEmailConstraint ) {
-            try {
-                R::exec('ALTER TABLE ' . self::TABLE . ' ADD CONSTRAINT unique_email UNIQUE (email)');
-            } catch (\Exception $e) {
-                // Игнорируем ошибку, если ограничение уже существует
-            }
-        }
-    }
-
-    public function hasRole(string $role): bool {
-        return $this->role === $role;
-    }
-
-    public function isAdmin(): bool {
-        return $this->hasRole(self::ROLE_ADMIN);
-    }
-
-    public function isManager(): bool {
-        return $this->hasRole(self::ROLE_MANAGER);
-    }
-
-    public static function validateRole(?string $role = null): void {
-        if( !$role || !in_array($role, array_keys(self::ROLES)) ) {
-            throw new ModelException('Недопустимая роль пользователя: ' . $role, 400);
-        }
     }
 }
